@@ -1,16 +1,30 @@
-// Gilded Vault — Rook, the burglar. Movement, tools, loot and the two
-// hold-to-use jobs (hack the terminal, crack the vault). Rook is a disc
-// that slides along walls; everything else is state the world reads.
+// Gilded Vault — Rook, the burglar.
+//
+// Movement, tools, loot and the two hold-to-use jobs (hack the terminal,
+// crack the vault). Rook is a disc that slides along walls; everything
+// else is state the world reads.
+//
+// Movement reads as a velocity: the pressed keys pick a direction, the
+// posture picks a speed, the loot picks a penalty, and the disc slides
+// along whatever it touches — including the closed vault door, which is
+// a gap in the walls that only opens once cracked.
 import { BURGLAR, GEAR } from './heist-tuning.js';
 import { START, DOOR, CONSOLE, TREASURE, isWall, inDuct, inDark, inGlow } from './heist-bank.js';
 import { discHitsBarrier } from './heist-sight.js';
 
-const DIRS = [
-  { keys: ['arrowleft', 'a'], dx: -1, dy: 0 },
-  { keys: ['arrowright', 'd'], dx: 1, dy: 0 },
-  { keys: ['arrowup', 'w'], dx: 0, dy: -1 },
-  { keys: ['arrowdown', 's'], dx: 0, dy: 1 },
+const STEPS = [
+  { keys: ['arrowleft', 'a'], x: -1, y: 0 },
+  { keys: ['arrowright', 'd'], x: 1, y: 0 },
+  { keys: ['arrowup', 'w'], x: 0, y: -1 },
+  { keys: ['arrowdown', 's'], x: 0, y: 1 },
 ];
+
+function circleOverlapsRect(x, y, r, rect) {
+  const cx = Math.max(rect.x, Math.min(x, rect.x + rect.w));
+  const cy = Math.max(rect.y, Math.min(y, rect.y + rect.h));
+  const dx = x - cx, dy = y - cy;
+  return dx * dx + dy * dy < r * r;
+}
 
 export class Burglar {
   constructor() {
@@ -42,11 +56,11 @@ export class Burglar {
     return this.loot.length;
   }
 
+  // Posture speed, capped in the duct, taxed by the loot on Rook's back.
   get speed() {
-    let s = this.crouch ? BURGLAR.crouch : this.sprint ? BURGLAR.sprint : BURGLAR.walk;
-    if (this.inVent()) s = Math.min(s, BURGLAR.duct);
-    s *= Math.max(0.55, 1 - BURGLAR.slowPerItem * this.lootCount);
-    return s;
+    const base = this.crouch ? BURGLAR.crouch : this.sprint ? BURGLAR.sprint : BURGLAR.walk;
+    const capped = this.inVent() ? Math.min(base, BURGLAR.duct) : base;
+    return capped * Math.max(0.55, 1 - BURGLAR.slowPerItem * this.lootCount);
   }
 
   inVent() { return inDuct(this.x, this.y); }
@@ -55,26 +69,26 @@ export class Burglar {
 
   // Keyboard movement. `keys` is the live key set from heist-input.
   step(dt, keys) {
-    let mx = 0, my = 0;
-    for (const d of DIRS) {
-      if (d.keys.some((k) => keys.has(k))) { mx += d.dx; my += d.dy; }
+    let vx = 0, vy = 0;
+    for (const s of STEPS) {
+      if (s.keys.some((k) => keys.has(k))) { vx += s.x; vy += s.y; }
     }
     this.crouch = keys.has('c') || keys.has('control');
     this.sprint = (keys.has('shift') || keys.has('shiftleft')) && !this.crouch;
-    this.moving = mx !== 0 || my !== 0;
+    this.moving = vx !== 0 || vy !== 0;
     if (!this.moving) return;
-    const len = Math.hypot(mx, my);
+    const mag = Math.hypot(vx, vy);
     const stride = this.speed * dt;
-    const sx = (mx / len) * stride, sy = (my / len) * stride;
-    // Axis-separated, like slideDisc, but the closed vault door counts
-    // as a wall too: it is a gap in BARRIERS that only opens once cracked.
-    let nx = this.x + sx;
-    if (discHitsBarrier(nx, this.y, this.radius) || this.doorBlocks(nx, this.y)) nx = this.x;
-    let ny = this.y + sy;
-    if (discHitsBarrier(nx, ny, this.radius) || this.doorBlocks(nx, ny)) ny = this.y;
+    const dx = (vx / mag) * stride, dy = (vy / mag) * stride;
+    // Slide axis by axis; the closed vault door blocks like a wall.
+    const blocked = (x, y) => discHitsBarrier(x, y, this.radius) || this.doorBlocks(x, y);
+    let nx = this.x + dx;
+    if (blocked(nx, this.y)) nx = this.x;
+    let ny = this.y + dy;
+    if (blocked(nx, ny)) ny = this.y;
     this.x = nx;
     this.y = ny;
-    this.angle = Math.atan2(my, mx);
+    this.angle = Math.atan2(vy, vx);
     // Footstep pacing for the sound board (faster when sprinting).
     this.stepTimer -= dt * (this.sprint ? 1.8 : 1);
     if (this.stepTimer <= 0) {
@@ -85,21 +99,16 @@ export class Burglar {
 
   // The closed vault door is solid: a disc overlapping its rect.
   doorBlocks(x, y) {
-    if (this.vaultOpen) return false;
-    const cx = Math.max(DOOR.x, Math.min(x, DOOR.x + DOOR.w));
-    const cy = Math.max(DOOR.y, Math.min(y, DOOR.y + DOOR.h));
-    const dx = x - cx, dy = y - cy;
-    return dx * dx + dy * dy < this.radius * this.radius;
+    return !this.vaultOpen && circleOverlapsRect(x, y, this.radius, DOOR);
   }
 
   nearConsole() {
     return Math.hypot(this.x - CONSOLE.x, this.y - CONSOLE.y) < CONSOLE.r + this.radius;
   }
 
+  // Close enough to work the door: within 52 px of its rect.
   nearDoor() {
-    const cx = Math.max(DOOR.x, Math.min(this.x, DOOR.x + DOOR.w));
-    const cy = Math.max(DOOR.y, Math.min(this.y, DOOR.y + DOOR.h));
-    return Math.hypot(this.x - cx, this.y - cy) < 52;
+    return circleOverlapsRect(this.x, this.y, 52, DOOR);
   }
 
   // Hold E: hack the terminal (lenses off) or crack the vault door.

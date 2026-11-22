@@ -1,8 +1,9 @@
-// Gilded Vault — the heist itself: one loop, one alarm, one night. It
-// owns the burglar, the watchmen, the lenses and the beams, and the rules
-// that bind them: the alarm meter, lockdown and the police timer, the win
-// (out the front door with the sapphire) and the two ways to lose
-// (caught, or the police arriving during lockdown).
+// Gilded Vault — the heist itself: one loop, one alarm, one night.
+//
+// The world owns the burglar, the watchmen, the lenses and the beams,
+// and the rules that bind them. Each frame runs in phases, in order:
+// move the burglar, let the bank watch back, work the alarm meter,
+// then settle the endings (lockdown, caught, escaped).
 import { METER, BURGLAR, POINTS, GEAR } from './heist-tuning.js';
 import {
   PATROLS, LENSES, BEAMS, TREASURE, WAY_OUT, areaName,
@@ -61,10 +62,9 @@ export class Heist {
 
   // True when a smoke cloud sits between the watcher and Rook.
   smokeBlocks(x0, y0, x1, y1) {
-    for (const cloud of this.rook.smokeClouds) {
-      if (pointSeg(cloud.x, cloud.y, x0, y0, x1, y1) < GEAR.smokeRadius) return true;
-    }
-    return false;
+    return this.rook.smokeClouds.some(
+      (cloud) => pointSeg(cloud.x, cloud.y, x0, y0, x1, y1) < GEAR.smokeRadius,
+    );
   }
 
   camerasOffline() {
@@ -83,15 +83,18 @@ export class Heist {
   }
 
   lootValue() {
-    return this.rook.loot.reduce((sum, id) => {
+    let total = 0;
+    for (const id of this.rook.loot) {
       const item = TREASURE.find((l) => l.id === id);
-      return sum + (item ? WORTH[item.kind] : 0);
-    }, 0);
+      if (item) total += WORTH[item.kind];
+    }
+    return total;
   }
 
   scoreBreakdown() {
     const loot = this.lootValue();
-    const timeBonus = Math.max(0, POINTS.capSeconds - Math.floor(this.elapsed)) * POINTS.perSecond;
+    const secondsLeft = Math.max(0, POINTS.capSeconds - Math.floor(this.elapsed));
+    const timeBonus = secondsLeft * POINTS.perSecond;
     const mm = String(Math.floor(this.elapsed / 60)).padStart(2, '0');
     const ss = String(Math.floor(this.elapsed % 60)).padStart(2, '0');
     return { loot, timeBonus, total: loot + timeBonus, time: `${mm}:${ss}` };
@@ -133,13 +136,9 @@ export class Heist {
     this.sound.lose();
   }
 
-  tick(dt, keys) {
-    if (this.phase !== 'play' || this.frozen) return;
-    this.now += dt;
-    this.elapsed += dt;
+  // Phase 1: the burglar acts — move, hold-to-use, loot, tools, noise.
+  burglarPhase(dt, keys) {
     const rook = this.rook;
-
-    // Burglar: move, hold-to-use, loot.
     rook.step(dt, keys.keys);
     const use = rook.useHeld(dt, keys.keys, this.now, this);
     if (use === 'hacked') this.alarm = Math.max(0, this.alarm - 10);
@@ -150,9 +149,7 @@ export class Heist {
     if (rook.stepped) { rook.stepped = false; this.sound.step(rook.sprint); }
 
     // Q: smoke. The key is read here (not in Burglar) so one press = one pellet.
-    if (keys.wasTapped('q')) {
-      if (rook.dropSmoke(this.now)) this.sound.smoke();
-    }
+    if (keys.wasTapped('q') && rook.dropSmoke(this.now)) this.sound.smoke();
 
     // Sprinting is loud: a rolling noise pulse the watchmen can hear.
     if (rook.sprint && rook.moving) {
@@ -160,8 +157,11 @@ export class Heist {
     } else if (this.noise && this.now > this.noise.until) {
       this.noise = null;
     }
+  }
 
-    // The bank watches back.
+  // Phase 2: the bank watches back — watchmen, lenses, beams.
+  watchPhase(dt) {
+    const rook = this.rook;
     for (const g of this.guards) g.update(dt, this);
     for (const lens of this.cameras) {
       lens.update(dt, this.now);
@@ -175,8 +175,11 @@ export class Heist {
         this.maybeLockdown();
       }
     }
+  }
 
-    // The alarm: pressure from every eye on Rook, decay when hidden.
+  // Phase 3: the alarm meter — pressure from every eye on Rook, decay
+  // when hidden — plus the shout that turns nearby heads.
+  alarmPhase(dt) {
     let pressure = 0;
     let maxSpotted = 0;
     for (const g of this.guards) {
@@ -190,7 +193,8 @@ export class Heist {
       this.alarm = Math.min(100, this.alarm + pressure * dt);
       this.maybeLockdown();
     } else {
-      this.alarm = Math.max(0, this.alarm - (this.lockdown ? METER.drainLocked : METER.drain) * dt);
+      const drain = this.lockdown ? METER.drainLocked : METER.drain;
+      this.alarm = Math.max(0, this.alarm - drain * dt);
     }
 
     // A watchman that just got sure shouts: neighbours turn to look.
@@ -198,10 +202,15 @@ export class Heist {
       this.spottedLatch = true;
       this.sound.spotted();
       const source = this.guards.find((g) => g.spotted >= 0.85);
-      if (source) shoutToNearby(this.guards, source, rook.x, rook.y);
+      if (source) shoutToNearby(this.guards, source, this.rook.x, this.rook.y);
     }
     if (maxSpotted < 0.5) this.spottedLatch = false;
+  }
 
+  // Phase 4: endings — lockdown and its police clock, being caught,
+  // and walking out the front door with the sapphire.
+  endingPhase(dt) {
+    const rook = this.rook;
     // Lockdown lifts when the meter falls back under the calm line.
     if (this.lockdown && this.alarm < METER.calmAgain) {
       this.lockdown = false;
@@ -209,28 +218,36 @@ export class Heist {
     if (this.lockdown) {
       this.policeTimer -= dt;
       // The front door is sealed during lockdown.
-      if (rook.y + rook.radius > 784 && rook.x > WAY_OUT.x && rook.x < WAY_OUT.x + WAY_OUT.w) {
-        rook.y = 784 - rook.radius;
-      }
+      const atDoor = rook.x > WAY_OUT.x && rook.x < WAY_OUT.x + WAY_OUT.w;
+      if (atDoor && rook.y + rook.radius > 784) rook.y = 784 - rook.radius;
       if (this.policeTimer <= 0) {
         this.lose('police');
-        return;
+        return false;
       }
     }
 
     // Caught.
-    for (const g of this.guards) {
-      if (g.catches(rook)) {
-        this.lose('caught');
-        return;
-      }
+    if (this.guards.some((g) => g.catches(rook))) {
+      this.lose('caught');
+      return false;
     }
 
     // Out the front door with the sapphire: the heist is done.
-    if (rook.hasSapphire && !this.lockdown
-      && rook.y + rook.radius > 786 && rook.x > WAY_OUT.x && rook.x < WAY_OUT.x + WAY_OUT.w) {
+    const atDoor = rook.x > WAY_OUT.x && rook.x < WAY_OUT.x + WAY_OUT.w;
+    if (rook.hasSapphire && !this.lockdown && rook.y + rook.radius > 786 && atDoor) {
       this.win();
     }
+    return true;
+  }
+
+  tick(dt, keys) {
+    if (this.phase !== 'play' || this.frozen) return;
+    this.now += dt;
+    this.elapsed += dt;
+    this.burglarPhase(dt, keys);
+    this.watchPhase(dt);
+    this.alarmPhase(dt);
+    this.endingPhase(dt);
   }
 }
 

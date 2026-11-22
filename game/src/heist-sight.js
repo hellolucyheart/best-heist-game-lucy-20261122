@@ -1,9 +1,10 @@
-// Gilded Vault — sight and touch: line-of-sight sampling, vision
-// cones, circle-vs-wall sliding, and point-to-segment distance.
+// Gilded Vault — sight and touch.
 //
-// Deliberately simple (sampled, not analytic): the bank's walls are
-// rectangles, so stepping along a sight line and asking "is this point
-// in a wall?" is exact enough at 4 px steps and cheap enough every frame.
+// Line-of-sight sampling, vision cones, circle-vs-wall sliding, and
+// point-to-segment distance. Deliberately simple (sampled, not analytic):
+// the bank's walls are rectangles, so stepping along a sight line and
+// asking "is this point in a wall?" is exact enough at 4 px steps and
+// cheap enough to run every frame.
 import { BARRIERS, isWall } from './heist-bank.js';
 import { EYES } from './heist-tuning.js';
 
@@ -12,19 +13,25 @@ export function clearLine(x0, y0, x1, y1) {
   const dx = x1 - x0, dy = y1 - y0;
   const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 4));
   for (let i = 1; i < steps; i++) {
-    if (isWall(x0 + (dx * i) / steps, y0 + (dy * i) / steps)) return false;
+    const t = i / steps;
+    if (isWall(x0 + dx * t, y0 + dy * t)) return false;
   }
   return true;
 }
 
-// True when (tx,ty) sits inside the cone from (x,y) facing `angle` with
-// `spread` on either side and `reach` range, with a clear sight line.
+function angleOff(from, to) {
+  const raw = Math.atan2(to.y - from.y, to.x - from.x) - from.angle;
+  return Math.atan2(Math.sin(raw), Math.cos(raw));
+}
+
+// True when the target sits inside the cone from `eye` (which faces
+// `eye.angle`) with `spread` on either side and `reach` range, and the
+// sight line is clear.
 export function seesInCone(x, y, angle, spread, reach, tx, ty) {
-  const dx = tx - x, dy = ty - y;
-  const dist = Math.hypot(dx, dy);
+  const dist = Math.hypot(tx - x, ty - y);
   if (dist > reach) return false;
   if (dist < 1) return true;
-  const off = Math.atan2(Math.sin(Math.atan2(dy, dx) - angle), Math.cos(Math.atan2(dy, dx) - angle));
+  const off = angleOff({ x, y, angle }, { x: tx, y: ty });
   if (Math.abs(off) > spread) return false;
   return clearLine(x, y, tx, ty);
 }
@@ -32,10 +39,8 @@ export function seesInCone(x, y, angle, spread, reach, tx, ty) {
 // Slide a disc (centre p, radius r) by (dx,dy) along the walls.
 // Axis-separated: try x, resolve, then y, resolve.
 export function slideDisc(p, r, dx, dy) {
-  let nx = p.x + dx;
-  if (discHitsBarrier(nx, p.y, r)) nx = p.x;
-  let ny = p.y + dy;
-  if (discHitsBarrier(nx, ny, r)) ny = p.y;
+  const nx = discHitsBarrier(p.x + dx, p.y, r) ? p.x : p.x + dx;
+  const ny = discHitsBarrier(nx, p.y + dy, r) ? p.y : p.y + dy;
   return { x: nx, y: ny };
 }
 
@@ -55,17 +60,25 @@ export function pointSeg(px, py, x0, y0, x1, y1) {
   const len2 = dx * dx + dy * dy;
   let t = len2 === 0 ? 0 : ((px - x0) * dx + (py - y0) * dy) / len2;
   t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px - (x0 + dx * t), py - (y0 + dy * t));
+  const cx = x0 + dx * t, cy = y0 + dy * t;
+  return Math.hypot(px - cx, py - cy);
 }
 
-// How exposed is Rook right now? 1 is normal; lower hides, higher exposes.
+// How exposed is Rook right now? 1 is normal; lower hides, higher
+// exposes. Each condition contributes one factor; they multiply.
+const EXPOSURE_FACTORS = [
+  { when: (f) => f.crouch, factor: EYES.crouched },
+  { when: (f) => f.sprint, factor: EYES.sprinting },
+  { when: (f) => f.inVent, factor: EYES.ducted },
+  { when: (f) => !f.inVent && f.inShadow, factor: EYES.shadowed },
+  { when: (f) => f.inLight, factor: EYES.lit },
+];
+
 export function exposure(x, y, flags) {
   let v = 1;
-  if (flags.crouch) v *= EYES.crouched;
-  if (flags.sprint) v *= EYES.sprinting;
-  if (flags.inVent) v *= EYES.ducted;
-  else if (flags.inShadow) v *= EYES.shadowed;
-  if (flags.inLight) v *= EYES.lit;
+  for (const { when, factor } of EXPOSURE_FACTORS) {
+    if (when(flags)) v *= factor;
+  }
   if (flags.lootCount > 0) v *= 1 + (EYES.loaded - 1) * flags.lootCount;
   return v;
 }

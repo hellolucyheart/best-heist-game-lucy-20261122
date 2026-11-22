@@ -1,14 +1,113 @@
-// Gilded Vault — the renderer. One canvas, one job: draw the bank, the
-// people in it, and the HUD, so that a single frame tells the whole
-// heist: the room Rook is crossing, watchmen with vision cones, lenses,
-// the loot target, and the alarm meter. Palette is navy marble and gold:
-// safe cover dark, danger red, loot gold — obvious at a glance.
+// Gilded Vault — the renderer, second pass.
+//
+// One canvas, one job: draw the bank, the people in it, and the HUD, so
+// a single frame tells the whole heist. The drawing is built from a few
+// tiny canvas verbs (disc, box, stroke, words) plus one table per thing
+// that has a shape, so adding a prop is adding a row, not a branch.
+//
+// Palette is navy marble and gold: safe cover dark, danger red, loot
+// gold — obvious at a glance.
 import { STAGE, STRIP, PALETTE, EYES, METER } from './heist-tuning.js';
 import {
   BARRIERS, AREAS, DARK, GLOW, DUCT, TREASURE, DOOR, CONSOLE, WAY_OUT,
 } from './heist-bank.js';
 
 const FONT = 'system-ui, sans-serif';
+
+// --- tiny canvas verbs -------------------------------------------------
+
+function disc(c, x, y, r, fill) {
+  c.fillStyle = fill;
+  c.beginPath();
+  c.arc(x, y, r, 0, Math.PI * 2);
+  c.fill();
+}
+
+function box(c, x, y, w, h, fill) {
+  c.fillStyle = fill;
+  c.fillRect(x, y, w, h);
+}
+
+function words(c, str, x, y, font, fill, align = 'left') {
+  c.font = font;
+  c.textAlign = align;
+  c.fillStyle = fill;
+  c.fillText(str, x, y);
+}
+
+function ring(c, x, y, r, stroke, width) {
+  c.strokeStyle = stroke;
+  c.lineWidth = width;
+  c.beginPath();
+  c.arc(x, y, r, 0, Math.PI * 2);
+  c.stroke();
+}
+
+// A vision cone drawn in the watcher's own frame: rotate to face the
+// way they look, then sweep an arc either side of straight ahead.
+function coneShape(c, x, y, angle, spread, reach, fill, edge) {
+  c.save();
+  c.translate(x, y);
+  c.rotate(angle);
+  c.fillStyle = fill;
+  c.beginPath();
+  c.moveTo(0, 0);
+  c.arc(0, 0, reach, -spread, spread);
+  c.closePath();
+  c.fill();
+  c.strokeStyle = edge;
+  c.lineWidth = 1.5;
+  c.beginPath();
+  c.moveTo(0, 0);
+  c.lineTo(Math.cos(-spread) * reach, Math.sin(-spread) * reach);
+  c.moveTo(0, 0);
+  c.lineTo(Math.cos(spread) * reach, Math.sin(spread) * reach);
+  c.stroke();
+  c.restore();
+}
+
+// --- treasure shapes ---------------------------------------------------
+// Each kind knows how to draw itself at (x, y); `pulse` is the idle
+// shimmer applied to the sapphire only.
+
+function drawSapphire(c, x, y, pulse) {
+  c.save();
+  c.translate(x, y);
+  c.scale(pulse, pulse);
+  c.fillStyle = PALETTE.sapphire;
+  c.beginPath();
+  c.moveTo(0, -14); c.lineTo(11, 0); c.lineTo(0, 14); c.lineTo(-11, 0);
+  c.closePath();
+  c.fill();
+  c.fillStyle = 'rgba(255,255,255,0.85)';
+  c.beginPath();
+  c.moveTo(0, -14); c.lineTo(5, 0); c.lineTo(0, 2); c.lineTo(-5, 0);
+  c.closePath();
+  c.fill();
+  c.restore();
+}
+
+function drawGoldBar(c, x, y) {
+  box(c, x - 11, y - 6, 22, 12, PALETTE.gold);
+  box(c, x - 11, y + 2, 22, 4, PALETTE.goldDark);
+  box(c, x - 8, y - 6, 16, 3, 'rgba(255,255,255,0.5)');
+}
+
+function drawCash(c, x, y) {
+  box(c, x - 10, y - 7, 20, 14, '#69b578');
+  box(c, x - 10, y - 2, 20, 4, '#3f7d4e');
+  disc(c, x, y, 3, '#dcefe0');
+}
+
+function drawKeycard(c, x, y) {
+  box(c, x - 9, y - 6, 18, 12, '#e8eaf2');
+  box(c, x - 9, y - 6, 18, 4, PALETTE.gold);
+}
+
+const TREASURE_SHAPES = { sapphire: drawSapphire, gold: drawGoldBar, cash: drawCash, keycard: drawKeycard };
+const TREASURE_TAGS = { sapphire: ['STAR SAPPHIRE', PALETTE.sapphire, -26], keycard: ['KEYCARD', '#e8eaf2', -20] };
+
+// --- the renderer ------------------------------------------------------
 
 export class Renderer {
   constructor(canvas) {
@@ -32,31 +131,26 @@ export class Renderer {
     this.paintBurglar(c, world);
     this.paintCoin(c, world);
     this.paintHud(c, world);
-    if (world.phase === 'title') this.paintTitle(c, world);
-    if (world.phase === 'win') this.paintWin(c, world);
-    if (world.phase === 'lose') this.paintLose(c, world);
+    const phase = world.phase;
+    if (phase === 'title') this.paintTitle(c, world);
+    if (phase === 'win') this.paintWin(c, world);
+    if (phase === 'lose') this.paintLose(c, world);
   }
 
   paintFloor(c) {
-    c.fillStyle = PALETTE.floor;
-    c.fillRect(0, STRIP, STAGE.width, STAGE.height - STRIP);
+    box(c, 0, STRIP, STAGE.width, STAGE.height - STRIP, PALETTE.floor);
     // Marble checker, faint, so the floor reads as bank tile.
-    c.fillStyle = PALETTE.floorAlt;
     for (let y = STRIP; y < STAGE.height; y += 64) {
       for (let x = ((y / 64) % 2) * 32; x < STAGE.width; x += 64) {
-        c.fillRect(x, y, 32, 32);
+        box(c, x, y, 32, 32, PALETTE.floorAlt);
       }
     }
   }
 
   paintAreas(c) {
     for (const a of AREAS) {
-      c.fillStyle = a.tint;
-      c.fillRect(a.x, a.y, a.w, a.h);
-      c.fillStyle = 'rgba(232,234,242,0.16)';
-      c.font = `600 13px ${FONT}`;
-      c.textAlign = 'left';
-      c.fillText(a.name, a.x + 10, a.y + 20);
+      box(c, a.x, a.y, a.w, a.h, a.tint);
+      words(c, a.name, a.x + 10, a.y + 20, `600 13px ${FONT}`, 'rgba(232,234,242,0.16)');
     }
     // Lit pools (warm) and dark corners (shadow) on top of the floor.
     for (const g of GLOW) {
@@ -81,10 +175,8 @@ export class Renderer {
     }
     // Barriers: dark slabs with a lit top edge.
     for (const b of BARRIERS) {
-      c.fillStyle = PALETTE.barrier;
-      c.fillRect(b.x, b.y, b.w, b.h);
-      c.fillStyle = PALETTE.barrierTop;
-      c.fillRect(b.x, b.y, b.w, 3);
+      box(c, b.x, b.y, b.w, b.h, PALETTE.barrier);
+      box(c, b.x, b.y, b.w, 3, PALETTE.barrierTop);
     }
   }
 
@@ -92,69 +184,33 @@ export class Renderer {
     for (const item of TREASURE) {
       if (item.taken) continue;
       const pulse = 1 + Math.sin(world.now * 3 + item.x) * 0.12;
-      if (item.kind === 'sapphire') {
-        c.save();
-        c.translate(item.x, item.y);
-        c.scale(pulse, pulse);
-        c.fillStyle = PALETTE.sapphire;
-        c.beginPath();
-        c.moveTo(0, -14); c.lineTo(11, 0); c.lineTo(0, 14); c.lineTo(-11, 0);
-        c.closePath(); c.fill();
-        c.fillStyle = 'rgba(255,255,255,0.85)';
-        c.beginPath(); c.moveTo(0, -14); c.lineTo(5, 0); c.lineTo(0, 2); c.lineTo(-5, 0); c.closePath(); c.fill();
-        c.restore();
-        this.label(c, item.x, item.y - 26, 'STAR SAPPHIRE', PALETTE.sapphire);
-      } else if (item.kind === 'gold') {
-        c.fillStyle = PALETTE.gold;
-        c.fillRect(item.x - 11, item.y - 6, 22, 12);
-        c.fillStyle = PALETTE.goldDark;
-        c.fillRect(item.x - 11, item.y + 2, 22, 4);
-        c.fillStyle = 'rgba(255,255,255,0.5)';
-        c.fillRect(item.x - 8, item.y - 6, 16, 3);
-      } else if (item.kind === 'cash') {
-        c.fillStyle = '#69b578';
-        c.fillRect(item.x - 10, item.y - 7, 20, 14);
-        c.fillStyle = '#3f7d4e';
-        c.fillRect(item.x - 10, item.y - 2, 20, 4);
-        c.fillStyle = '#dcefe0';
-        c.beginPath(); c.arc(item.x, item.y, 3, 0, Math.PI * 2); c.fill();
-      } else if (item.kind === 'keycard') {
-        c.fillStyle = '#e8eaf2';
-        c.fillRect(item.x - 9, item.y - 6, 18, 12);
-        c.fillStyle = PALETTE.gold;
-        c.fillRect(item.x - 9, item.y - 6, 18, 4);
-        this.label(c, item.x, item.y - 20, 'KEYCARD', '#e8eaf2');
-      }
+      TREASURE_SHAPES[item.kind](c, item.x, item.y, pulse);
+      const tag = TREASURE_TAGS[item.kind];
+      if (tag) this.label(c, item.x, item.y + tag[2], tag[0], tag[1]);
     }
   }
 
   label(c, x, y, text, color) {
     c.font = `700 11px ${FONT}`;
     c.textAlign = 'center';
-    c.fillStyle = 'rgba(10,12,26,0.75)';
     const w = c.measureText(text).width + 10;
-    c.fillRect(x - w / 2, y - 10, w, 15);
-    c.fillStyle = color;
-    c.fillText(text, x, y + 2);
+    box(c, x - w / 2, y - 10, w, 15, 'rgba(10,12,26,0.75)');
+    words(c, text, x, y + 2, `700 11px ${FONT}`, color, 'center');
   }
 
   hint(c, x, y, text) {
     c.font = `700 13px ${FONT}`;
     c.textAlign = 'center';
     const w = c.measureText(text).width + 16;
-    c.fillStyle = 'rgba(10,12,26,0.85)';
-    c.fillRect(x - w / 2, y - 13, w, 20);
-    c.fillStyle = '#e8eaf2';
-    c.fillText(text, x, y + 2);
+    box(c, x - w / 2, y - 13, w, 20, 'rgba(10,12,26,0.85)');
+    words(c, text, x, y + 2, `700 13px ${FONT}`, '#e8eaf2', 'center');
   }
 
   paintConsole(c, world) {
     const on = !world.camerasOffline();
-    c.fillStyle = on ? '#37d67a' : '#5a6274';
-    c.beginPath(); c.arc(CONSOLE.x, CONSOLE.y, 7, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = on ? '#37d67a' : '#5a6274';
-    c.lineWidth = 2;
-    c.beginPath(); c.arc(CONSOLE.x, CONSOLE.y, 12, 0, Math.PI * 2); c.stroke();
+    const dot = on ? '#37d67a' : '#5a6274';
+    disc(c, CONSOLE.x, CONSOLE.y, 7, dot);
+    ring(c, CONSOLE.x, CONSOLE.y, 12, dot, 2);
     this.label(c, CONSOLE.x, CONSOLE.y - 24, CONSOLE.label, on ? '#37d67a' : '#9aa3c0');
     if (world.rook.nearConsole() && on) {
       this.hint(c, CONSOLE.x, CONSOLE.y + 30, 'Hold E — hack cameras');
@@ -163,33 +219,23 @@ export class Renderer {
 
   paintExit(c, world) {
     const sealed = world.lockdown;
-    c.fillStyle = sealed ? '#ff3b5c' : '#37d67a';
-    c.fillRect(WAY_OUT.x, WAY_OUT.y - 6, WAY_OUT.w, 6);
-    c.font = `700 13px ${FONT}`;
-    c.textAlign = 'center';
-    c.fillStyle = sealed ? '#ff3b5c' : '#37d67a';
-    c.fillText(sealed ? 'EXIT — SEALED' : 'EXIT', WAY_OUT.x + WAY_OUT.w / 2, WAY_OUT.y - 14);
+    const color = sealed ? '#ff3b5c' : '#37d67a';
+    box(c, WAY_OUT.x, WAY_OUT.y - 6, WAY_OUT.w, 6, color);
+    words(c, sealed ? 'EXIT — SEALED' : 'EXIT', WAY_OUT.x + WAY_OUT.w / 2, WAY_OUT.y - 14,
+      `700 13px ${FONT}`, color, 'center');
   }
 
   paintDoor(c, world) {
     const d = DOOR;
     if (world.rook.vaultOpen) {
-      c.fillStyle = '#3a2f10';
-      c.fillRect(d.x, d.y, d.w, d.h);
-      c.fillStyle = PALETTE.gold;
-      c.font = `700 11px ${FONT}`;
-      c.textAlign = 'center';
-      c.fillText('OPEN', d.x + d.w / 2 + 34, d.y + d.h / 2 + 4);
+      box(c, d.x, d.y, d.w, d.h, '#3a2f10');
+      words(c, 'OPEN', d.x + d.w / 2 + 34, d.y + d.h / 2 + 4, `700 11px ${FONT}`, PALETTE.gold, 'center');
       return;
     }
-    c.fillStyle = '#8a6d1f';
-    c.fillRect(d.x, d.y, d.w, d.h);
-    c.fillStyle = '#5c4712';
-    for (let i = 0; i < 3; i++) c.fillRect(d.x + 2, d.y + 6 + i * 18, d.w - 4, 3);
-    c.fillStyle = PALETTE.gold;
-    c.beginPath(); c.arc(d.x + d.w / 2, d.y + d.h / 2, 7, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#3a2f10';
-    c.beginPath(); c.arc(d.x + d.w / 2, d.y + d.h / 2, 3, 0, Math.PI * 2); c.fill();
+    box(c, d.x, d.y, d.w, d.h, '#8a6d1f');
+    for (let i = 0; i < 3; i++) box(c, d.x + 2, d.y + 6 + i * 18, d.w - 4, 3, '#5c4712');
+    disc(c, d.x + d.w / 2, d.y + d.h / 2, 7, PALETTE.gold);
+    disc(c, d.x + d.w / 2, d.y + d.h / 2, 3, '#3a2f10');
     const doorTag = world.rook.hasKeycard ? 'VAULT — HOLD E TO CRACK' : 'VAULT — NEEDS KEYCARD';
     this.label(c, d.x + d.w / 2, d.y - 12, doorTag, PALETTE.gold);
     if (world.rook.nearDoor() && world.rook.hasKeycard) {
@@ -215,42 +261,23 @@ export class Renderer {
       c.strokeStyle = `rgba(255,59,92,${flicker})`;
       c.lineWidth = b.tripped ? 5 : 3;
       c.beginPath(); c.moveTo(b.x0, b.y); c.lineTo(b.x1, b.y); c.stroke();
-      c.fillStyle = '#ff3b5c';
-      c.fillRect(b.x0 - 4, b.y - 5, 8, 10);
-      c.fillRect(b.x1 - 4, b.y - 5, 8, 10);
+      box(c, b.x0 - 4, b.y - 5, 8, 10, '#ff3b5c');
+      box(c, b.x1 - 4, b.y - 5, 8, 10, '#ff3b5c');
     }
-  }
-
-  wedge(c, x, y, angle, spread, range, fill, edge) {
-    c.fillStyle = fill;
-    c.beginPath();
-    c.moveTo(x, y);
-    c.arc(x, y, range, angle - spread, angle + spread);
-    c.closePath();
-    c.fill();
-    c.strokeStyle = edge;
-    c.lineWidth = 1.5;
-    c.beginPath();
-    c.moveTo(x, y);
-    c.lineTo(x + Math.cos(angle - spread) * range, y + Math.sin(angle - spread) * range);
-    c.moveTo(x, y);
-    c.lineTo(x + Math.cos(angle + spread) * range, y + Math.sin(angle + spread) * range);
-    c.stroke();
   }
 
   paintLenses(c, world) {
     for (const lens of world.cameras) {
       const off = lens.offline;
       const hot = lens.seesRook;
-      const fill = off ? 'rgba(120,128,145,0.10)'
-        : hot ? 'rgba(255,59,92,0.34)' : 'rgba(255,196,66,0.20)';
-      const edge = off ? 'rgba(120,128,145,0.5)'
-        : hot ? 'rgba(255,59,92,0.9)' : 'rgba(255,196,66,0.7)';
-      if (!off) this.wedge(c, lens.x, lens.y, lens.angle, EYES.lensSpread, EYES.lensReach, fill, edge);
-      c.fillStyle = off ? '#5a6274' : hot ? '#ff3b5c' : '#c9d1d9';
-      c.beginPath(); c.arc(lens.x, lens.y, 8, 0, Math.PI * 2); c.fill();
-      c.fillStyle = '#10142a';
-      c.beginPath(); c.arc(lens.x, lens.y, 3, 0, Math.PI * 2); c.fill();
+      const mood = off
+        ? { fill: 'rgba(120,128,145,0.10)', edge: 'rgba(120,128,145,0.5)', dot: '#5a6274' }
+        : hot
+          ? { fill: 'rgba(255,59,92,0.34)', edge: 'rgba(255,59,92,0.9)', dot: '#ff3b5c' }
+          : { fill: 'rgba(255,196,66,0.20)', edge: 'rgba(255,196,66,0.7)', dot: '#c9d1d9' };
+      if (!off) coneShape(c, lens.x, lens.y, lens.angle, EYES.lensSpread, EYES.lensReach, mood.fill, mood.edge);
+      disc(c, lens.x, lens.y, 8, mood.dot);
+      disc(c, lens.x, lens.y, 3, '#10142a');
       if (off) {
         c.strokeStyle = '#ff3b5c';
         c.lineWidth = 2;
@@ -266,16 +293,15 @@ export class Renderer {
     for (const g of world.guards) {
       const chasing = g.state === 'chase' || g.state === 'converge';
       const alert = g.spotted > 0.35;
-      const fill = chasing ? 'rgba(255,59,92,0.36)'
-        : alert ? 'rgba(255,196,66,0.26)' : 'rgba(127,176,105,0.16)';
-      const edge = chasing ? 'rgba(255,59,92,0.9)'
-        : alert ? 'rgba(255,196,66,0.75)' : 'rgba(127,176,105,0.55)';
-      this.wedge(c, g.x, g.y, g.angle, EYES.guardSpread, EYES.guardReach, fill, edge);
+      const mood = chasing
+        ? { fill: 'rgba(255,59,92,0.36)', edge: 'rgba(255,59,92,0.9)', mark: '!', markColor: '#ff3b5c' }
+        : alert
+          ? { fill: 'rgba(255,196,66,0.26)', edge: 'rgba(255,196,66,0.75)', mark: '?', markColor: '#f5c542' }
+          : { fill: 'rgba(127,176,105,0.16)', edge: 'rgba(127,176,105,0.55)', mark: '', markColor: '' };
+      coneShape(c, g.x, g.y, g.angle, EYES.guardSpread, EYES.guardReach, mood.fill, mood.edge);
       // Body: dark uniform, cap, and a facing tick.
-      c.fillStyle = PALETTE.uniform;
-      c.beginPath(); c.arc(g.x, g.y, 13, 0, Math.PI * 2); c.fill();
-      c.fillStyle = PALETTE.watchman;
-      c.beginPath(); c.arc(g.x, g.y, 8, 0, Math.PI * 2); c.fill();
+      disc(c, g.x, g.y, 13, PALETTE.uniform);
+      disc(c, g.x, g.y, 8, PALETTE.watchman);
       c.strokeStyle = '#20264a';
       c.lineWidth = 3;
       c.beginPath();
@@ -285,16 +311,11 @@ export class Renderer {
       // Spotted meter above the head.
       if (g.spotted > 0.05) {
         const w = 30;
-        c.fillStyle = 'rgba(10,12,26,0.8)';
-        c.fillRect(g.x - w / 2, g.y - 26, w, 5);
-        c.fillStyle = chasing ? '#ff3b5c' : '#f5c542';
-        c.fillRect(g.x - w / 2, g.y - 26, w * g.spotted, 5);
+        box(c, g.x - w / 2, g.y - 26, w, 5, 'rgba(10,12,26,0.8)');
+        box(c, g.x - w / 2, g.y - 26, w * g.spotted, 5, chasing ? '#ff3b5c' : '#f5c542');
       }
-      if (g.state === 'investigate' || chasing) {
-        c.font = `700 13px ${FONT}`;
-        c.textAlign = 'center';
-        c.fillStyle = chasing ? '#ff3b5c' : '#f5c542';
-        c.fillText(chasing ? '!' : '?', g.x, g.y - 30);
+      if (mood.mark) {
+        words(c, mood.mark, g.x, g.y - 30, `700 13px ${FONT}`, mood.markColor, 'center');
       }
     }
   }
@@ -307,128 +328,87 @@ export class Renderer {
     c.save();
     c.translate(r.x, r.y);
     c.rotate(r.angle);
-    c.fillStyle = PALETTE.burglarDark;
-    c.beginPath(); c.arc(0, 0, rad + 2, 0, Math.PI * 2); c.fill();
-    c.fillStyle = PALETTE.burglar;
-    c.beginPath(); c.arc(0, 0, rad, 0, Math.PI * 2); c.fill();
+    disc(c, 0, 0, rad + 2, PALETTE.burglarDark);
+    disc(c, 0, 0, rad, PALETTE.burglar);
     // Cloak point + the loot sack on the back.
     c.fillStyle = '#7a1f24';
     c.beginPath(); c.moveTo(rad, 0); c.lineTo(-rad * 0.7, -rad * 0.8); c.lineTo(-rad * 0.7, rad * 0.8); c.closePath(); c.fill();
-    if (r.lootCount > 0) {
-      c.fillStyle = PALETTE.gold;
-      c.beginPath(); c.arc(-rad * 0.9, 0, 5, 0, Math.PI * 2); c.fill();
-    }
+    if (r.lootCount > 0) disc(c, -rad * 0.9, 0, 5, PALETTE.gold);
     c.restore();
     // Hold-to-use progress ring.
     const prog = Math.max(r.hackProgress, r.crackProgress);
     if (prog > 0) {
-      c.strokeStyle = 'rgba(232,234,242,0.35)';
-      c.lineWidth = 4;
-      c.beginPath(); c.arc(r.x, r.y, 22, 0, Math.PI * 2); c.stroke();
+      ring(c, r.x, r.y, 22, 'rgba(232,234,242,0.35)', 4);
       c.strokeStyle = PALETTE.gold;
+      c.lineWidth = 4;
       c.beginPath(); c.arc(r.x, r.y, 22, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2); c.stroke();
     }
     // Sprint noise ring.
     if (r.sprint && r.moving) {
-      c.strokeStyle = 'rgba(232,234,242,0.35)';
-      c.lineWidth = 2;
-      c.beginPath(); c.arc(r.x, r.y, 34 + Math.sin(world.now * 10) * 4, 0, Math.PI * 2); c.stroke();
+      ring(c, r.x, r.y, 34 + Math.sin(world.now * 10) * 4, 'rgba(232,234,242,0.35)', 2);
     }
   }
 
   paintCoin(c, world) {
     if (!world.coinFx || world.coinFx.until < world.now) return;
     const left = world.coinFx.until - world.now;
-    c.strokeStyle = `rgba(245,197,66,${Math.min(1, left)})`;
-    c.lineWidth = 2;
-    c.beginPath(); c.arc(world.coinFx.x, world.coinFx.y, 14 + (0.9 - left) * 30, 0, Math.PI * 2); c.stroke();
-    c.fillStyle = PALETTE.gold;
-    c.beginPath(); c.arc(world.coinFx.x, world.coinFx.y, 4, 0, Math.PI * 2); c.fill();
+    ring(c, world.coinFx.x, world.coinFx.y, 14 + (0.9 - left) * 30, `rgba(245,197,66,${Math.min(1, left)})`, 2);
+    disc(c, world.coinFx.x, world.coinFx.y, 4, PALETTE.gold);
   }
 
   paintHud(c, world) {
-    c.fillStyle = PALETTE.stripBg;
-    c.fillRect(0, 0, STAGE.width, STRIP);
-    c.fillStyle = 'rgba(245,197,66,0.25)';
-    c.fillRect(0, STRIP - 2, STAGE.width, 2);
+    box(c, 0, 0, STAGE.width, STRIP, PALETTE.stripBg);
+    box(c, 0, STRIP - 2, STAGE.width, 2, 'rgba(245,197,66,0.25)');
     // Title.
-    c.textAlign = 'left';
-    c.fillStyle = PALETTE.gold;
-    c.font = `800 20px ${FONT}`;
-    c.fillText('GILDED VAULT', 16, 28);
-    c.fillStyle = PALETTE.inkDim;
-    c.font = `600 11px ${FONT}`;
-    c.fillText('Meridian National Bank — 02:47 AM', 16, 47);
+    words(c, 'GILDED VAULT', 16, 28, `800 20px ${FONT}`, PALETTE.gold);
+    words(c, 'Meridian National Bank — 02:47 AM', 16, 47, `600 11px ${FONT}`, PALETTE.inkDim);
     // Alarm meter.
     const ax = 330, ay = 16, aw = 300, ah = 20;
     const a = world.alarm;
     const aColor = a >= METER.lockdown ? '#ff3b5c'
       : a >= METER.suspicious ? '#f5c542' : '#37d67a';
-    c.fillStyle = 'rgba(232,234,242,0.15)';
-    c.fillRect(ax, ay, aw, ah);
-    c.fillStyle = aColor;
-    c.fillRect(ax, ay, aw * (a / 100), ah);
+    box(c, ax, ay, aw, ah, 'rgba(232,234,242,0.15)');
+    box(c, ax, ay, aw * (a / 100), ah, aColor);
     c.strokeStyle = 'rgba(232,234,242,0.5)';
     c.lineWidth = 1;
     c.strokeRect(ax, ay, aw, ah);
-    c.fillStyle = PALETTE.ink;
-    c.font = `700 12px ${FONT}`;
-    c.textAlign = 'left';
     const aLabel = world.lockdown
       ? `LOCKDOWN  ${Math.round(a)}%  —  POLICE ${Math.ceil(world.policeTimer)}s`
       : a >= METER.suspicious ? `SUSPICIOUS  ${Math.round(a)}%` : `ALARM  ${Math.round(a)}%`;
-    c.fillText(aLabel + (world.sound.muted ? '   ·   MUTED' : ''), ax, ay + ah + 15);
+    words(c, aLabel + (world.sound.muted ? '   ·   MUTED' : ''), ax, ay + ah + 15,
+      `700 12px ${FONT}`, PALETTE.ink);
     // Loot + tools.
     const lootValue = world.lootValue();
-    c.fillStyle = PALETTE.ink;
-    c.font = `700 14px ${FONT}`;
-    c.textAlign = 'left';
-    c.fillText(`LOOT $${lootValue.toLocaleString('en-US')}`, 700, 26);
-    c.fillStyle = PALETTE.inkDim;
-    c.font = `600 12px ${FONT}`;
+    words(c, `LOOT $${lootValue.toLocaleString('en-US')}`, 700, 26, `700 14px ${FONT}`, PALETTE.ink);
     const sap = world.rook.hasSapphire ? '★ SAPPHIRE' : '○ SAPPHIRE';
     const key = world.rook.hasKeycard ? 'KEYCARD ✓' : 'KEYCARD ○';
-    c.fillText(`${sap}   ${key}   smoke ${world.rook.smoke}   coins ${world.rook.coins}`, 700, 46);
+    words(c, `${sap}   ${key}   smoke ${world.rook.smoke}   coins ${world.rook.coins}`, 700, 46,
+      `600 12px ${FONT}`, PALETTE.inkDim);
     // Timer + room.
-    c.textAlign = 'right';
-    c.fillStyle = PALETTE.ink;
-    c.font = `700 16px ${FONT}`;
     const mm = String(Math.floor(world.elapsed / 60)).padStart(2, '0');
     const ss = String(Math.floor(world.elapsed % 60)).padStart(2, '0');
-    c.fillText(`${mm}:${ss}`, STAGE.width - 16, 26);
-    c.fillStyle = PALETTE.inkDim;
-    c.font = `600 12px ${FONT}`;
-    c.fillText(world.roomName(), STAGE.width - 16, 46);
+    words(c, `${mm}:${ss}`, STAGE.width - 16, 26, `700 16px ${FONT}`, PALETTE.ink, 'right');
+    words(c, world.roomName(), STAGE.width - 16, 46, `600 12px ${FONT}`, PALETTE.inkDim, 'right');
     // Objective line, bottom-right (bottom-left holds the EXIT sign).
-    c.textAlign = 'right';
-    c.fillStyle = 'rgba(232,234,242,0.85)';
-    c.font = `600 13px ${FONT}`;
-    c.fillText(world.objective(), STAGE.width - 16, STAGE.height - 14);
+    words(c, world.objective(), STAGE.width - 16, STAGE.height - 14,
+      `600 13px ${FONT}`, 'rgba(232,234,242,0.85)', 'right');
     // Lockdown flash.
     if (world.lockdown && Math.floor(world.now * 2) % 2 === 0) {
-      c.fillStyle = 'rgba(255,59,92,0.06)';
-      c.fillRect(0, STRIP, STAGE.width, STAGE.height - STRIP);
+      box(c, 0, STRIP, STAGE.width, STAGE.height - STRIP, 'rgba(255,59,92,0.06)');
     }
   }
 
   overlay(c, title, lines, accent) {
-    c.fillStyle = 'rgba(10,12,26,0.88)';
-    c.fillRect(240, 170, 800, 400);
+    box(c, 240, 170, 800, 400, 'rgba(10,12,26,0.88)');
     c.strokeStyle = accent;
     c.lineWidth = 3;
     c.strokeRect(240, 170, 800, 400);
-    c.textAlign = 'center';
-    c.fillStyle = accent;
-    c.font = `800 44px ${FONT}`;
-    c.fillText(title, 640, 250);
-    c.fillStyle = PALETTE.ink;
-    c.font = `600 18px ${FONT}`;
-    lines.forEach((line, i) => c.fillText(line, 640, 300 + i * 32));
+    words(c, title, 640, 250, `800 44px ${FONT}`, accent, 'center');
+    lines.forEach((line, i) => words(c, line, 640, 300 + i * 32, `600 18px ${FONT}`, PALETTE.ink, 'center'));
   }
 
   paintTitle(c, world) {
-    c.fillStyle = 'rgba(10,12,26,0.72)';
-    c.fillRect(0, STRIP, STAGE.width, STAGE.height - STRIP);
+    box(c, 0, STRIP, STAGE.width, STAGE.height - STRIP, 'rgba(10,12,26,0.72)');
     this.overlay(c, 'GILDED VAULT', [
       'One night. One vault. One sapphire.',
       'Steal the keycard, crack the vault, grab the Star Sapphire,',

@@ -74,29 +74,14 @@ export class Watchman {
     }
     if (this.state === 'investigate') this.lookTimer -= dt;
 
-    // Movement.
+    // Movement: wait at a patrol stop, scan while investigating, else
+    // walk toward the goal.
     const dest = this.goal();
     const pace = this.state === 'chase' || this.state === 'converge' ? this.chaseSpeed : this.speed;
     if (this.state === 'patrol' && this.wait > 0) {
       this.wait -= dt;
     } else if (dest) {
-      const dx = dest.x - this.x, dy = dest.y - this.y;
-      const d = Math.hypot(dx, dy);
-      if (d < 4) {
-        if (this.state === 'patrol') {
-          this.leg = (this.leg + 1) % this.waypoints.length;
-          this.wait = this.pause;
-        } else if (this.state === 'investigate') {
-          this.lookTimer = Math.max(this.lookTimer, 0.6);
-          this.angle += dt * 1.4; // scan around while looking
-        }
-      } else {
-        const step = Math.min(d, pace * dt);
-        const moved = slideDisc(this, 13, (dx / d) * step, (dy / d) * step);
-        this.x = moved.x;
-        this.y = moved.y;
-        this.angle = Math.atan2(dy, dx);
-      }
+      this.advance(dt, dest, pace);
     }
 
     // Hearing: sprinting close by, or a coin landing nearby.
@@ -107,6 +92,28 @@ export class Watchman {
         this.investigate = { x: world.noise.x, y: world.noise.y };
         this.lookTimer = 2.2;
       }
+    }
+  }
+
+  // One step toward `dest`, sliding along walls. Arriving at a patrol
+  // stop advances the loop; arriving at an investigate spot scans.
+  advance(dt, dest, pace) {
+    const dx = dest.x - this.x, dy = dest.y - this.y;
+    const d = Math.hypot(dx, dy);
+    if (d >= 4) {
+      const step = Math.min(d, pace * dt);
+      const moved = slideDisc(this, 13, (dx / d) * step, (dy / d) * step);
+      this.x = moved.x;
+      this.y = moved.y;
+      this.angle = Math.atan2(dy, dx);
+      return;
+    }
+    if (this.state === 'patrol') {
+      this.leg = (this.leg + 1) % this.waypoints.length;
+      this.wait = this.pause;
+    } else if (this.state === 'investigate') {
+      this.lookTimer = Math.max(this.lookTimer, 0.6);
+      this.angle += dt * 1.4; // scan around while looking
     }
   }
 

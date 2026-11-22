@@ -17,7 +17,14 @@ const BOT = STAGE.height - T;
 const LFT = T;
 const RGT = STAGE.width - T;
 
+// Builders keep the tables short: one row per thing, no repeated keys.
 function rect(x, y, w, h) { return { x, y, w, h }; }
+function room(name, x, y, w, h, tint) { return { name, x, y, w, h, tint }; }
+function spot(x, y, r) { return { x, y, r }; }
+function loot(id, kind, x, y, label) { return { id, kind, x, y, label }; }
+function lens(id, x, y, base, sweep, speed, phase) { return { id, x, y, base, sweep, speed, phase }; }
+function beam(id, x0, x1, yMid, amp, speed, phase) { return { id, x0, x1, yMid, amp, speed, phase }; }
+function patrol(name, waypoints, speed, pause) { return { name, waypoints, speed, pause }; }
 
 // Every barrier is a solid rectangle. Doors are gaps between segments.
 // Patrol lines were checked against these rects by hand: every guard
@@ -70,14 +77,14 @@ export const BARRIERS = [
 
 // Rooms, for floor tint and the "you are here" label. Checked in order.
 export const AREAS = [
-  { name: 'VENT DUCT', x: 316, y: 80, w: 448, h: 56, tint: '#141a2e' },
-  { name: 'LOBBY', x: LFT, y: TOP, w: 284, h: BOT - TOP, tint: '#20264a' },
-  { name: 'TELLER HALL', x: 316, y: 152, w: 464, h: BOT - 152, tint: '#232b4d' },
-  { name: 'SECURITY', x: 796, y: TOP, w: 468, h: 236, tint: '#1a2038' },
-  { name: 'VAULT CORRIDOR', x: 796, y: 316, w: 304, h: 244, tint: '#241f33' },
-  { name: 'VAULT', x: 1116, y: 316, w: 148, h: 324, tint: '#2a2410' },
-  { name: 'SOUTH HALL', x: 796, y: 576, w: 304, h: BOT - 576, tint: '#20264a' },
-  { name: 'SOUTH HALL', x: 1116, y: 656, w: 148, h: BOT - 656, tint: '#20264a' },
+  room('VENT DUCT', 316, 80, 448, 56, '#141a2e'),
+  room('LOBBY', LFT, TOP, 284, BOT - TOP, '#20264a'),
+  room('TELLER HALL', 316, 152, 464, BOT - 152, '#232b4d'),
+  room('SECURITY', 796, TOP, 468, 236, '#1a2038'),
+  room('VAULT CORRIDOR', 796, 316, 304, 244, '#241f33'),
+  room('VAULT', 1116, 316, 148, 324, '#2a2410'),
+  room('SOUTH HALL', 796, 576, 304, BOT - 576, '#20264a'),
+  room('SOUTH HALL', 1116, 656, 148, BOT - 656, '#20264a'),
 ];
 
 // The vent duct: a crawl space along the top of the hall. Cameras cannot
@@ -86,13 +93,13 @@ export const DUCT = { x: 316, y: 80, w: 448, h: 56 };
 
 // Treasure. `taken` flips at runtime; `kind` decides value and weight.
 export const TREASURE = [
-  { id: 'keycard', kind: 'keycard', x: 975, y: 158, label: 'KEYCARD' },
-  { id: 'sapphire', kind: 'sapphire', x: 1190, y: 470, label: 'STAR SAPPHIRE' },
-  { id: 'gold1', kind: 'gold', x: 1175, y: 372, label: 'GOLD BAR' },
-  { id: 'gold2', kind: 'gold', x: 470, y: 640, label: 'GOLD BAR' },
-  { id: 'gold3', kind: 'gold', x: 1040, y: 156, label: 'GOLD BAR' },
-  { id: 'cash1', kind: 'cash', x: 660, y: 500, label: 'CASH' },
-  { id: 'cash2', kind: 'cash', x: 700, y: 720, label: 'CASH' },
+  loot('keycard', 'keycard', 975, 158, 'KEYCARD'),
+  loot('sapphire', 'sapphire', 1190, 470, 'STAR SAPPHIRE'),
+  loot('gold1', 'gold', 1175, 372, 'GOLD BAR'),
+  loot('gold2', 'gold', 470, 640, 'GOLD BAR'),
+  loot('gold3', 'gold', 1040, 156, 'GOLD BAR'),
+  loot('cash1', 'cash', 660, 500, 'CASH'),
+  loot('cash2', 'cash', 700, 720, 'CASH'),
 ];
 
 // The vault door (west wall of the vault room) and the security terminal.
@@ -101,37 +108,37 @@ export const CONSOLE = { x: 905, y: 152, r: 36, label: 'SECURITY TERMINAL' };
 
 // Rotating lenses: mounted on a wall point, sweeping around `base`.
 export const LENSES = [
-  { id: 'cam1', x: 548, y: 160, base: Math.PI / 2, sweep: 0.9, speed: 0.45, phase: 0 },
-  { id: 'cam2', x: 812, y: 316, base: 0.35, sweep: 0.8, speed: 0.55, phase: 1.6 },
-  { id: 'cam3', x: 940, y: 768, base: -Math.PI / 2, sweep: 0.85, speed: 0.4, phase: 3.1 },
+  lens('cam1', 548, 160, Math.PI / 2, 0.9, 0.45, 0),
+  lens('cam2', 812, 316, 0.35, 0.8, 0.55, 1.6),
+  lens('cam3', 940, 768, -Math.PI / 2, 0.85, 0.4, 3.1),
 ];
 
 // Laser beams across the vault corridor: a horizontal line whose height
 // slides up and down. Crossing one trips the alarm.
 export const BEAMS = [
-  { id: 'laser1', x0: 800, x1: 1096, yMid: 380, amp: 52, speed: 0.5, phase: 0 },
-  { id: 'laser2', x0: 800, x1: 1096, yMid: 490, amp: 44, speed: 0.65, phase: 2.2 },
+  beam('laser1', 800, 1096, 380, 52, 0.5, 0),
+  beam('laser2', 800, 1096, 490, 44, 0.65, 2.2),
 ];
 
 // Guard patrols: named watchmen, waypoint loops, pause at each stop.
 // Every segment was checked clear of walls and desks (see BARRIERS note).
 export const PATROLS = [
-  { name: 'Marco', waypoints: [[380, 180], [700, 180], [700, 620], [380, 620]], speed: 62, pause: 1.2 },
-  { name: 'Dana', waypoints: [[200, 700], [200, 440], [440, 440], [440, 640], [160, 640]], speed: 58, pause: 1.0 },
-  { name: 'Petra', waypoints: [[850, 170], [1050, 170], [1050, 260], [940, 260], [940, 380], [1040, 380], [1040, 520], [860, 520], [860, 380], [940, 380]], speed: 66, pause: 0.9 },
-  { name: 'Viktor', waypoints: [[860, 700], [1200, 700], [1200, 660], [860, 660]], speed: 60, pause: 1.1 },
+  patrol('Marco', [[380, 180], [700, 180], [700, 620], [380, 620]], 62, 1.2),
+  patrol('Dana', [[200, 700], [200, 440], [440, 440], [440, 640], [160, 640]], 58, 1.0),
+  patrol('Petra', [[850, 170], [1050, 170], [1050, 260], [940, 260], [940, 380], [1040, 380], [1040, 520], [860, 520], [860, 380], [940, 380]], 66, 0.9),
+  patrol('Viktor', [[860, 700], [1200, 700], [1200, 660], [860, 660]], 60, 1.1),
 ];
 
 // Dark corners (hide) and lit pools (expose), as circles.
 export const DARK = [
-  { x: 82, y: 172, r: 46 }, { x: 82, y: 642, r: 46 },
-  { x: 750, y: 420, r: 42 }, { x: 340, y: 740, r: 44 },
-  { x: 1210, y: 130, r: 40 }, { x: 830, y: 730, r: 42 },
+  spot(82, 172, 46), spot(82, 642, 46),
+  spot(750, 420, 42), spot(340, 740, 44),
+  spot(1210, 130, 40), spot(830, 730, 42),
 ];
 export const GLOW = [
-  { x: 485, y: 237, r: 58 }, { x: 630, y: 237, r: 58 },
-  { x: 530, y: 577, r: 58 }, { x: 650, y: 577, r: 58 },
-  { x: 1190, y: 470, r: 66 },
+  spot(485, 237, 58), spot(630, 237, 58),
+  spot(530, 577, 58), spot(650, 577, 58),
+  spot(1190, 470, 66),
 ];
 
 // The way out: the front door at the bottom of the lobby.
