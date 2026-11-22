@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gilded Vault — a bank heist game</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0a0d1d;
+    color: #e8eaf2;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+  }
+  canvas {
+    display: block;
+    width: min(1280px, 100vw);
+    height: auto;
+    background: #10142a;
+  }
+  .help {
+    max-width: 1280px;
+    padding: 10px 16px 18px;
+    font-size: 13px;
+    color: #9aa3c0;
+    line-height: 1.6;
+    text-align: center;
+  }
+  .help b { color: #e8eaf2; }
+  .help .gold { color: #f5c542; }
+</style>
+</head>
+<body>
+<canvas id="game" width="1280" height="800"></canvas>
+<p class="help">
+  <b>GILDED VAULT</b> — one night, one vault, one sapphire.
+  <span class="gold">WASD / arrows</span> move ·
+  <span class="gold">Shift</span> sprint (loud) ·
+  <span class="gold">C</span> crouch (hidden) ·
+  <span class="gold">E</span> hold to hack / crack ·
+  <span class="gold">Q</span> smoke pellet ·
+  <span class="gold">Click</span> toss a coin ·
+  <span class="gold">M</span> mute ·
+  <span class="gold">Enter</span> start ·
+  <span class="gold">R</span> retry
+</p>
+<script type="module">
+  import { boot } from './src/heist-main.js';
+  boot();
+</script>
+</body>
+</html>
